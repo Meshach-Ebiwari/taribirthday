@@ -79,6 +79,7 @@ function GameContent() {
   const [wasCorrect, setWasCorrect] = useState<boolean | null>(null);
   const [finalScores, setFinalScores] = useState<PublicPlayer[]>([]);
   const [answerCount, setAnswerCount] = useState({ answered: 0, total: 0 });
+  const [roundNumber, setRoundNumber] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const mySocketId = useRef<string>('');
 
@@ -106,8 +107,21 @@ function GameContent() {
     }
 
     socket.on('game:phase', ({ phase: p }: { phase: string }) => {
-      if (p === 'idle' || p === 'lobby') setPhase('lobby');
+      if (p === 'idle' || p === 'lobby') {
+        // Reset all round-specific state when returning to lobby
+        setPhase('lobby');
+        setQuestion(null);
+        setAnswerInput('');
+        setMyAnswer('');
+        setWasCorrect(null);
+        setRevealAnswer('');
+        setFinalScores([]);
+      }
       if (p === 'ended') setPhase('ended');
+    });
+
+    socket.on('game:round', ({ round }: { round: number }) => {
+      setRoundNumber(round);
     });
 
     socket.on('game:players', (list: PublicPlayer[]) => {
@@ -176,6 +190,7 @@ function GameContent() {
     return () => {
       socket.off('connect');
       socket.off('game:phase');
+      socket.off('game:round');
       socket.off('game:players');
       socket.off('game:countdown');
       socket.off('game:question');
@@ -215,7 +230,9 @@ function GameContent() {
       <div className="min-h-screen flex flex-col items-center justify-center px-4 py-12 gap-6">
         <div className="text-center">
           <div className="text-5xl mb-4">🎮</div>
-          <h1 className="text-4xl font-extrabold text-white mb-2">Get Ready!</h1>
+          <h1 className="text-4xl font-extrabold text-white mb-2">
+            {roundNumber > 0 ? `Round ${roundNumber + 1}` : 'Get Ready!'}
+          </h1>
           <p className="text-white/60 text-lg">Waiting for the host to start the game...</p>
         </div>
 

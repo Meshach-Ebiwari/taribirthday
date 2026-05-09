@@ -26,15 +26,19 @@ const io = new Server(server, {
 // ─── Game State ───────────────────────────────────────────────────────────────
 let gameState = {
   phase: 'idle',        // 'idle' | 'lobby' | 'playing' | 'reveal' | 'ended'
-  questions: [],        // selected shuffled puzzles (elements only, answer included server-side)
+  questions: [],
   currentIndex: -1,
   timeLeft: 30,
   timerInterval: null,
   revealTimeout: null,
   players: {},          // { [socketId]: { sessionId, firstName, lastName, score, answeredCurrent } }
-  answers: {},          // { [socketId]: submittedAnswer } reset each question
+  answers: {},
   hostSocketId: null,
+  roundNumber: 0,
 };
+
+// Persists across rounds — only cleared manually or when exhausted
+const usedQuestionIds = new Set();
 
 // ─── Game Helpers ─────────────────────────────────────────────────────────────
 function shuffle(arr) {
@@ -65,17 +69,23 @@ function getPublicQuestion(q) {
   return { id: q.id, elements: q.elements }; // NO answer field
 }
 
+function getPoolStatus() {
+  const PUZZLES = require('./data/puzzles');
+  return { remaining: PUZZLES.length - usedQuestionIds.size, total: PUZZLES.length };
+}
+
 function resetGameState() {
   if (gameState.timerInterval) clearInterval(gameState.timerInterval);
   if (gameState.revealTimeout) clearTimeout(gameState.revealTimeout);
-  gameState.phase = 'idle';
+  gameState.phase = 'lobby';
   gameState.questions = [];
   gameState.currentIndex = -1;
   gameState.timeLeft = 30;
   gameState.timerInterval = null;
   gameState.revealTimeout = null;
   gameState.answers = {};
-  // Keep players but reset scores
+  gameState.roundNumber += 1;
+  // Keep players connected but reset scores
   Object.keys(gameState.players).forEach((sid) => {
     gameState.players[sid].score = 0;
     gameState.players[sid].answeredCurrent = false;
@@ -188,6 +198,8 @@ io.on('connection', (socket) => {
       // Send current state immediately so host sees players who already joined
       socket.emit('game:players', getPublicPlayers());
       socket.emit('game:phase', { phase: gameState.phase });
+      socket.emit('game:round', { round: gameState.roundNumber });
+      socket.emit('game:pool_status', getPoolStatus());
     } else {
       socket.emit('game:auth_result', { success: false });
     }
@@ -198,11 +210,24 @@ io.on('connection', (socket) => {
     if (socket.id !== gameState.hostSocketId) return;
     const PUZZLES = require('./data/puzzles');
     const count = Math.min(questionCount || 10, PUZZLES.length);
+
     resetGameState();
-    gameState.questions = shuffle([...PUZZLES]).slice(0, count);
-    gameState.phase = 'lobby';
+
+    // Pick from unused questions; auto-reset pool if not enough remain
+    let unused = PUZZLES.filter((p) => !usedQuestionIds.has(p.id));
+    if (unused.length < count) {
+      usedQuestionIds.clear();
+      unused = [...PUZZLES];
+    }
+    const selected = shuffle(unused).slice(0, count);
+    selected.forEach((p) => usedQuestionIds.add(p.id));
+    gameState.questions = selected;
+
     io.emit('game:phase', { phase: 'lobby' });
-    // 3 second countdown then start
+    io.emit('game:round', { round: gameState.roundNumber });
+    io.emit('game:pool_status', getPoolStatus());
+
+    // 3-second countdown then start
     let cd = 3;
     io.emit('game:countdown', { count: cd });
     const cdInterval = setInterval(() => {
@@ -239,12 +264,21 @@ io.on('connection', (socket) => {
     socket.emit('game:answer_ack', { correct, locked: true });
   });
 
-  // Host reset
+  // Host reset (Play Again) — keeps players connected, transitions everyone to lobby
   socket.on('game:reset', () => {
     if (socket.id !== gameState.hostSocketId) return;
     resetGameState();
-    io.emit('game:phase', { phase: 'idle' });
+    io.emit('game:phase', { phase: 'lobby' });
+    io.emit('game:round', { round: gameState.roundNumber });
     io.emit('game:players', getPublicPlayers());
+    io.emit('game:pool_status', getPoolStatus());
+  });
+
+  // Host manually resets the question pool
+  socket.on('game:reset_pool', () => {
+    if (socket.id !== gameState.hostSocketId) return;
+    usedQuestionIds.clear();
+    socket.emit('game:pool_status', getPoolStatus());
   });
 
   // On disconnect: remove from players

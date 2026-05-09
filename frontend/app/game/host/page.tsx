@@ -27,6 +27,8 @@ export default function HostPage() {
   const [questionTotal, setQuestionTotal] = useState(0);
   const [answerCount, setAnswerCount] = useState({ answered: 0, total: 0 });
   const [finalScores, setFinalScores] = useState<PublicPlayer[]>([]);
+  const [poolStatus, setPoolStatus] = useState<{ remaining: number; total: number }>({ remaining: 50, total: 50 });
+  const [roundNumber, setRoundNumber] = useState(0);
   const [origin, setOrigin] = useState('');
   const socketConnected = useRef(false);
 
@@ -90,6 +92,14 @@ export default function HostPage() {
       setView('ended');
     });
 
+    socket.on('game:pool_status', ({ remaining, total }: { remaining: number; total: number }) => {
+      setPoolStatus({ remaining, total });
+    });
+
+    socket.on('game:round', ({ round }: { round: number }) => {
+      setRoundNumber(round);
+    });
+
     return () => {
       socket.off('connect', onConnect);
       socket.off('game:auth_result');
@@ -98,6 +108,8 @@ export default function HostPage() {
       socket.off('game:question');
       socket.off('game:answer_count');
       socket.off('game:end');
+      socket.off('game:pool_status');
+      socket.off('game:round');
     };
   }, [authenticated, view, players.length]);
 
@@ -118,6 +130,11 @@ export default function HostPage() {
     const socket = getSocket();
     socket.emit('game:reset');
     setView('lobby');
+  };
+
+  const handleResetPool = () => {
+    const socket = getSocket();
+    socket.emit('game:reset_pool');
   };
 
   const medals = ['🥇', '🥈', '🥉'];
@@ -206,6 +223,27 @@ export default function HostPage() {
               ))}
             </ul>
           )}
+        </div>
+
+        {/* Pool status */}
+        <div className="card flex items-center justify-between gap-4">
+          <div>
+            <p className="text-white font-semibold text-sm mb-0.5">Question Pool</p>
+            <p className="text-white/50 text-xs">
+              {poolStatus.remaining === 0
+                ? 'Pool exhausted — will auto-reset on next start'
+                : `${poolStatus.remaining} / ${poolStatus.total} questions remaining`}
+            </p>
+            {roundNumber > 0 && (
+              <p className="text-purple-300 text-xs mt-0.5">Round {roundNumber} completed</p>
+            )}
+          </div>
+          <button
+            onClick={handleResetPool}
+            className="text-xs bg-white/10 hover:bg-white/20 border border-white/20 text-white/70 hover:text-white px-3 py-2 rounded-lg transition-all flex-shrink-0"
+          >
+            Reset Pool 🔄
+          </button>
         </div>
 
         {/* Question count */}
@@ -307,6 +345,9 @@ export default function HostPage() {
         <div className="text-center">
           <div className="text-5xl mb-3">🏆</div>
           <h1 className="text-4xl font-extrabold gradient-text mb-2">Game Over!</h1>
+          <p className="text-white/40 text-sm">
+            {poolStatus.remaining} / {poolStatus.total} questions remaining in pool
+          </p>
         </div>
 
         <div className="card">
@@ -326,12 +367,8 @@ export default function HostPage() {
           onClick={handleReset}
           className="btn-primary w-full text-xl py-4"
         >
-          Play Again 🔄
+          Play Again — Round {roundNumber + 1} 🎮
         </button>
-
-        <Link href="/game/host" className="btn-secondary w-full text-center text-lg py-3">
-          Back to Host Panel
-        </Link>
       </div>
     );
   }
